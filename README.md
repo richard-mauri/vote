@@ -38,3 +38,4 @@ make run
 * It is easy to spoof a voter by plagiarizing the email address. Ideally, a voter registration endpoint that takes a few "credentials' and returns a voter Id would replace the email attribute.
 * For large elections and better scalability there should be multiple vote servers behind a load balancer. This would require "service discovery" and could be implemented with Consul (as I am familiar with that!)
 * Unit tests!
+* Better logging https://github.com/sirupsen/logrus
