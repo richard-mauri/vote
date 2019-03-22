@@ -6,14 +6,14 @@ Docker compose will start the following servers:
 1. Redis server for storing candidate : vote KV entries
 1. GoLang Http vote server that provides voter registration, voting, and current candiate vote results
 * /help (prints the available http endpoints)
-* /register POST request body like: {"username":"richard", "password":"dummy"} (return a JWT Token)
+* /register POST request body like: {"username":"richard@foo.com", "password":"dummy"} (returns a JWT Token)
 * /voteui GET
   * An http form requires the following fields
-     * email is the user casting his vote
+     * jwt is the JWT Token associated with the voter who is casting his vote
      * candidate is one of the candidates to vote for
      * vote is a submit button - a user specified by email may only cast one vote
 * /vote GET
-  * A JSON response with the current tallied votes will be returned
+  * A JSON response with the current tallied votes for each candidate will be returned
 * /vote/{candidate} POST Header contains JWT token like "authorization: jwt xxx.yyy.zzz"
   * candidate is one of the following
     * "JoeBiden",
@@ -36,8 +36,8 @@ make run
   * {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwYXNzd29yZCI6ImR1bW15IiwidXNlcm5hbWUiOiJyaWNoYXJkIn0.N4Z9B9GUOUGZvWJSf2qRg9bNBRNWZDiBwmjhTDpndLI"}
 * curl -X POST --header "authorization: jwt eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwYXNzd29yZCI6ImR1bW15IiwidXNlcm5hbWUiOiJyaWNoYXJkIn0.N4Z9B9GUOUGZvWJSf2qRg9bNBRNWZDiBwmjhTDpndLI" -v http://localhost:8000/vote/BernieSanders
 * curl http://localhost:8000/help
-  * POST /register Body like: {'username': 'xxx', 'password': 'yyy'} (returns a JWT token)
-  * POST /vote/{candidate} Heder like: 'authorization: jwt xxx.yyy.zzz' (one vote per user)
+  * POST /register Body like: {'username': 'xxx@aaa.com', 'password': 'yyy'} (returns a JWT token)
+  * POST /vote/{candidate} Heder like: 'authorization: jwt xxx.yyy.zzz' (one vote per user!)
   * GET /vote (shows current votes per candidate)
 
 ## Limitations
