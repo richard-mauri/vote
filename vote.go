@@ -1,7 +1,5 @@
 package main
 
-// See: https://www.thepolyglotdeveloper.com/2017/03/authenticate-a-golang-api-with-json-web-tokens/
-
 import (
 	"encoding/json"
 	"flag"
@@ -27,46 +25,41 @@ const (
 	VoteHtml = "vote.html"
 )
 
+// User is a type of object that will be associated with a Jwt Claim (for authorized voting)
 type User struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
+// JwtToken is a type of object that encapsulates a Jwt token, gets JSON encoded and returned to the registered voter
 type JwtToken struct {
 	Token string `json:"token"`
 }
 
+// Feedback is a type of object used to encapsulate a message to be logged
 type Feedback struct {
 	Message string `json:"message"`
 }
 
+// InputVote is a type of object used to associate a voter and the candidate he voted for
 type InputVote struct {
 	Username  string
 	Candidate string
 }
 
-var (
-	politeTokenError = fmt.Errorf("Please provide a valid JWT token")
-	VersionString    = ""
-	voteAddr         *string
-	redisAddr        *string
-	redisClient      *redis.Client      // connections are goroutine safe
-	tmpl             *template.Template // goroutine safe
-	candidates       = []string{
-		"JoeBiden",
-		"BetoORourke",
-		"BernieSanders",
-		"ElizabethWarren",
-		"KamalaHarris",
-		"DonaldTrump"}
-)
+// TokenParser is an interface that facilitates testing and decoupling mock vs Jwt token parsing
+type TokenParser interface {
+	TokenParse() (username string, err error)
+}
 
-func getUsernameFromToken(inputjwt string) (username string, err error) {
-	if inputjwt == "" {
-		err = politeTokenError
-		return username, err
-	}
-	token, err := jwt.Parse(inputjwt, func(token *jwt.Token) (interface{}, error) {
+// JwtTokenParser is a type of object used for concrete Jwt token parsing (a receiver type)
+type JwtTokenParser struct {
+	token string
+}
+
+// TokenParse is a concrete Jwt based implementation of a TokenParser used to extract username from a Jwt token
+func (p *JwtTokenParser) TokenParse() (username string, err error) {
+	token, err := jwt.Parse(p.token, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, politeTokenError
 		}
@@ -85,6 +78,30 @@ func getUsernameFromToken(inputjwt string) (username string, err error) {
 	return username, err
 }
 
+// NewJwtTokenParser acts as a constructor for a JwtTokenParser
+func NewJwtTokenParser(token string) (parser TokenParser) {
+	return &JwtTokenParser{token: token}
+}
+
+var (
+	politeTokenError = fmt.Errorf("Please provide a valid JWT token")
+	VersionString    = ""
+	voteAddr         *string
+	redisAddr        *string
+	redisClient      *redis.Client      // connections are goroutine safe
+	tmpl             *template.Template // goroutine safe
+	candidates       = []string{        // TODO: Encapsulate as a pluggable Ballot
+		"JoeBiden",
+		"BetoORourke",
+		"BernieSanders",
+		"ElizabethWarren",
+		"KamalaHarris",
+		"DonaldTrump"}
+)
+
+// validateMiddleware is an Http handler midleware wrapper (common code) for processing a Jwt token
+// A valid Jwt token claim will be injectd into a context object for use by the next chained handler
+// TODO: Normalize against the voteUIHandler and TokenParser
 func validateMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		authorizationHeader := req.Header.Get("authorization")
@@ -116,27 +133,32 @@ func validateMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
+// credkey constructs a key used to identify a user's credentials
 func credkey(username string) string {
 	return username + ".cred"
 }
 
+// validUsername validates that a voter (aka user) is identified by an email string
 func validUsername(username string) bool {
-	re := regexp.MustCompile(
-		"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+	re := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
 
 	return re.MatchString(username)
 }
 
+// registerHandler is an http handler that will store a voter/user credential and construct a Jwt token for use in subsequent voting operations
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	var user User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		log.Println("Error decoding user: " + err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if !validUsername(user.Username) || user.Password == "" {
-		log.Println("Illegal username or password")
+
+	tokenString, err := createJwtClaim(user.Username, user.Password)
+
+	if err != nil {
+		log.Println("Error creating Jwt claim: " + err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -146,21 +168,26 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"username": user.Username,
-		"password": user.Password,
-	})
-	tokenString, err := token.SignedString([]byte(Secret))
-	if err != nil {
-		log.Println("Error signing secret : " + err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(JwtToken{Token: tokenString})
 }
 
+func createJwtClaim(username, password string) (tokenString string, err error) {
+	if !validUsername(username) || password == "" {
+		err = fmt.Errorf("Illegal username or password")
+		return tokenString, err
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": username,
+		"password": password,
+	})
+	return token.SignedString([]byte(Secret))
+}
+
+// setVoteHandler is an http handler that will cast a voter/user's vote for a candidate
+// It must be called by middleware to set the Jwt Claim
+// Only one vorte by a voter is allowed
 func setVoteHandler(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	candidate := params["candidate"]
@@ -172,7 +199,7 @@ func setVoteHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("setVoteHandler: username = " + username + " ; candidate = " + candidate)
 
-	// Be double safe! Perform JWT verify AND confirm credentials match what was stored in the DB at registration time
+	// Be double safe. Perform JWT verify AND confirm credentials match what was stored in the DB at registration time
 	_, err := redisClient.Get(credkey(username)).Result()
 	if err == redis.Nil {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -214,6 +241,8 @@ func setVoteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// voteUIHandler is an http handler that expects an Jwt token (represents a voter) and a candiate to be supplied as form data
+// TODO: Normalize against the setVoteHandler which currently expects this input data to be in an Http Header
 func voteUIHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		tmpl.Execute(w, nil)
@@ -221,7 +250,9 @@ func voteUIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jwt := r.FormValue("jwt")
-	username, err := getUsernameFromToken(jwt)
+	tp := NewJwtTokenParser(jwt)
+	username, err := tp.TokenParse()
+
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		tmpl.Execute(w, struct{ Status string }{err.Error()})
@@ -244,6 +275,7 @@ func voteUIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// saveVote will cast a voter's vote only if not done previously
 func saveVote(inputVote InputVote) (alreadyVoted bool, err error) {
 	alreadyVoted, err = hasAlreadyVoted(inputVote.Username)
 	if err != nil || alreadyVoted {
@@ -262,6 +294,7 @@ func saveVote(inputVote InputVote) (alreadyVoted bool, err error) {
 	return alreadyVoted, err
 }
 
+// helpHandler is an http handler for printing the http endpoint signatures
 func helpHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	msg := "POST /register Body like: {'username': 'xxx', 'password': 'yyy'} (returns a JWT token)\n"
@@ -270,6 +303,7 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(msg))
 }
 
+// getVotesHandler is an http handler that will present a JSON encoded tally of all the candidate votes
 func getVotesHandler(w http.ResponseWriter, r *http.Request) {
 	cmap, err := getCandidatesVotes()
 
@@ -285,6 +319,7 @@ func getVotesHandler(w http.ResponseWriter, r *http.Request) {
 	enc.Encode(cmap)
 }
 
+// getCandidatesVotes is a helper func that queries the DB for the candidate votes
 func getCandidatesVotes() (cmap map[string]string, err error) {
 
 	cmap = make(map[string]string)
@@ -305,6 +340,7 @@ func getCandidatesVotes() (cmap map[string]string, err error) {
 	return cmap, err
 }
 
+// hasAlreadyVoted is a helper func that queries the DB to chck that a voter/user has not already voted
 func hasAlreadyVoted(username string) (bool, error) {
 	usernameCountStr, err := redisClient.Get(username).Result()
 	if err == redis.Nil {
@@ -329,6 +365,7 @@ func hasAlreadyVoted(username string) (bool, error) {
 	return false, nil
 }
 
+// newRedisClient is a constructor for a Redis client which acts as our voting DB
 func newRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:     *redisAddr,
@@ -337,6 +374,7 @@ func newRedisClient() *redis.Client {
 	})
 }
 
+// genVotingHtmlForm creates an html file with form data for a voter to cast a vote
 func genVotingHtmlForm() error {
 	form := "<!DOCTYPE html>\n"
 	form += "<html>\n"
@@ -370,6 +408,7 @@ func genVotingHtmlForm() error {
 	return err
 }
 
+// parseFlags parses CLI flags to facilitate configurability
 func parseFlags() {
 	version := flag.Bool("v", false, "print current version and exit")
 	voteAddr = flag.String("voteAddr", ":8000", "vote address")
@@ -383,6 +422,7 @@ func parseFlags() {
 	}
 }
 
+// The main entry point for the vote server
 func main() {
 	parseFlags()
 

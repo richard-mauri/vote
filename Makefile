@@ -28,5 +28,6 @@ run:
 
 clean:
 	docker-compose down
+	rm -rf ./data
 
 .PHONY: all default test fmt release clean
