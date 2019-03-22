@@ -27,7 +27,6 @@ run:
 	docker-compose up
 
 clean:
-	rm -rf data
-	docker rmi -f vote
+	docker-compose down
 
 .PHONY: all default test fmt release clean

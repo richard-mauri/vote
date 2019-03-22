@@ -41,7 +41,9 @@ make run
   * GET /vote (shows current votes per candidate)
 
 ## Limitations
+* Hardening of JWT  shared secret
+* Hardening of Redis credentials
 * The candidates are hard coded in vote.go. Consider adding an endpoint to define a Ballot listing the candidates
-* The Redis and Vote server hostname ports are hard coded.
-* Unit tests!
+* Therer are two voting http endpoints (CLI vs UI). Normalize
+* Unit test support
 * Better logging https://github.com/sirupsen/logrus

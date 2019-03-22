@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	Secret = "secret" // TODO: Hardening
+	Secret   = "secret" // TODO: Hardening
+	VoteHtml = "vote.html"
 )
 
 type User struct {
@@ -47,6 +48,8 @@ type InputVote struct {
 var (
 	politeTokenError = fmt.Errorf("Please provide a valid JWT token")
 	VersionString    = ""
+	voteAddr         *string
+	redisAddr        *string
 	redisClient      *redis.Client      // connections are goroutine safe
 	tmpl             *template.Template // goroutine safe
 	candidates       = []string{
@@ -328,13 +331,13 @@ func hasAlreadyVoted(username string) (bool, error) {
 
 func newRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:     "redis:6379",
-		Password: "",
+		Addr:     *redisAddr,
+		Password: "", // TODO: hardening
 		DB:       0,
 	})
 }
 
-func genHtmlForm() error {
+func genVotingHtmlForm() error {
 	form := "<!DOCTYPE html>\n"
 	form += "<html>\n"
 	form += "<body>\n"
@@ -363,12 +366,14 @@ func genHtmlForm() error {
 	form += "</html>"
 
 	message := []byte(form)
-	err := ioutil.WriteFile("vote.html", message, 0644)
+	err := ioutil.WriteFile(VoteHtml, message, 0644)
 	return err
 }
 
 func parseFlags() {
 	version := flag.Bool("v", false, "print current version and exit")
+	voteAddr = flag.String("voteAddr", ":8000", "vote address")
+	redisAddr = flag.String("redisAddr", "redis:6379", "redis address")
 
 	flag.Parse()
 
@@ -381,12 +386,12 @@ func parseFlags() {
 func main() {
 	parseFlags()
 
-	err := genHtmlForm()
+	err := genVotingHtmlForm()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	tmpl = template.Must(template.ParseFiles("vote.html"))
+	tmpl = template.Must(template.ParseFiles(VoteHtml))
 
 	redisClient = newRedisClient()
 	router := mux.NewRouter()
@@ -398,5 +403,5 @@ func main() {
 	router.HandleFunc("/voteui", voteUIHandler)
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("."))) // For serving static content like vote.jpg
 
-	log.Fatal(http.ListenAndServe(":8000", router))
+	log.Fatal(http.ListenAndServe(*voteAddr, router))
 }
