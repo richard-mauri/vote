@@ -45,5 +45,4 @@ make run
 * Hardening of Redis credentials
 * The candidates are hard coded in vote.go. Consider adding an endpoint to define a Ballot listing the candidates
 * Therer are two voting http endpoints (CLI vs UI). Normalize
-* Unit test support
 * Better logging https://github.com/sirupsen/logrus
