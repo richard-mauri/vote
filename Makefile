@@ -10,8 +10,7 @@ default: build
 all: fmt build test clean run
 
 build: clean
-	go build -o vote -ldflags "-X main.VersionString=${VERSION}-${BUILDTIME}"  .
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o vote.linux -ldflags "-X main.VersionString=${VERSION}-${BUILDTIME}"
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ./votedir/vote.linux -ldflags "-X main.VersionString=${VERSION}-${BUILDTIME}"
 	docker build -f Dockerfile.scratch -t vote:latest .
 
 test:
@@ -31,4 +30,4 @@ clean:
 	rm -rf data
 	docker rmi -f vote
 
-.PHONY: all default test fmt release run clean
+.PHONY: all default test fmt release clean

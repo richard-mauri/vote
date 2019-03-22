@@ -45,10 +45,11 @@ type InputVote struct {
 }
 
 var (
-	VersionString = ""
-	redisClient   *redis.Client      // connections are goroutine safe
-	tmpl          *template.Template // goroutine safe
-	candidates    = []string{
+	politeTokenError = fmt.Errorf("Please provide a valid JWT token")
+	VersionString    = ""
+	redisClient      *redis.Client      // connections are goroutine safe
+	tmpl             *template.Template // goroutine safe
+	candidates       = []string{
 		"JoeBiden",
 		"BetoORourke",
 		"BernieSanders",
@@ -58,13 +59,19 @@ var (
 )
 
 func getUsernameFromToken(inputjwt string) (username string, err error) {
+	if inputjwt == "" {
+		err = politeTokenError
+		return username, err
+	}
 	token, err := jwt.Parse(inputjwt, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("There was an error")
+			return nil, politeTokenError
 		}
 		return []byte(Secret), nil
 	})
 	if err != nil {
+		log.Println("Error processing JWT token: " + err.Error())
+		err = politeTokenError
 		return username, err
 	}
 	if token.Valid {
@@ -83,7 +90,7 @@ func validateMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if len(bearerToken) == 2 {
 				token, error := jwt.Parse(bearerToken[1], func(token *jwt.Token) (interface{}, error) {
 					if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-						return nil, fmt.Errorf("There was an error")
+						return nil, fmt.Errorf("Error processing the JWT token")
 					}
 					return []byte(Secret), nil
 				})
@@ -142,7 +149,6 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		"username": user.Username,
 		"password": user.Password,
 	})
-	log.Printf("Created token: %+v\n", token)
 	tokenString, err := token.SignedString([]byte(Secret))
 	if err != nil {
 		log.Println("Error signing secret : " + err.Error())
@@ -214,8 +220,9 @@ func voteUIHandler(w http.ResponseWriter, r *http.Request) {
 	jwt := r.FormValue("jwt")
 	username, err := getUsernameFromToken(jwt)
 	if err != nil {
-		log.Println(err.Error())
 		w.WriteHeader(http.StatusUnauthorized)
+		tmpl.Execute(w, struct{ Status string }{err.Error()})
+		return
 	}
 
 	input := InputVote{
@@ -328,11 +335,15 @@ func newRedisClient() *redis.Client {
 }
 
 func genHtmlForm() error {
-	form := "<h1>Contact</h1>\n"
-	form = fmt.Sprintf("%s<form method=\"POST\">\n", form)
-	form = fmt.Sprintf("%s<label>JWT Token: </label>\n", form)
-	form = fmt.Sprintf("%s<input type=\"text\" name=\"jwt\" autocomplete=\"off\"><br/><br/>\n", form)
-	form = fmt.Sprintf("%s<label>Candidates:</label><br/>\n", form)
+	form := "<!DOCTYPE html>\n"
+	form += "<html>\n"
+	form += "<body>\n"
+	form += "<img src=\"vote.jpg\" alt=\"Vote!\" height=\"182\" width=\"390\">\n"
+	form += "<h1>Let's Vote!</h1>\n"
+	form += "<form method=\"POST\">\n"
+	form += "<label>Enter your JWT Token: </label>\n"
+	form += "<input type=\"text\" name=\"jwt\" autocomplete=\"off\"><br/><br/>\n"
+	form += "<label>The candidates:</label><br/>\n"
 
 	for i, c := range candidates {
 		line := fmt.Sprintf("<input type=\"radio\" name=\"candidate\" value=\"%s\"", c)
@@ -345,9 +356,11 @@ func genHtmlForm() error {
 		form += line
 	}
 
-	form = fmt.Sprintf("%s<input type=\"submit\" value=\"Vote\"><br/><br/>\n", form)
-	form = fmt.Sprintf("%s<label>{{.Status}}</label>\n", form)
-	form = fmt.Sprintf("%s</form>", form)
+	form += "<br/><input type=\"submit\" value=\"Place your vote\"><br/><br/>\n"
+	form += "<label>{{.Status}}</label>\n"
+	form += "</form>\n"
+	form += "</body>\n"
+	form += "</html>"
 
 	message := []byte(form)
 	err := ioutil.WriteFile("vote.html", message, 0644)
@@ -382,8 +395,8 @@ func main() {
 	router.HandleFunc("/register", registerHandler).Methods("POST")
 	router.HandleFunc("/vote/{candidate}", validateMiddleware(setVoteHandler)).Methods("POST")
 	router.HandleFunc("/vote", getVotesHandler).Methods("GET")
-
 	router.HandleFunc("/voteui", voteUIHandler)
+	router.PathPrefix("/").Handler(http.FileServer(http.Dir("."))) // For serving static content like vote.jpg
 
 	log.Fatal(http.ListenAndServe(":8000", router))
 }

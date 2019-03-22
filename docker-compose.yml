@@ -4,7 +4,7 @@ services:
   app:
     image: vote:latest
     volumes:
-      - .:/vote
+      - ./votedir:/vote
     working_dir: /vote
     ports:
       - "8000:8000"
